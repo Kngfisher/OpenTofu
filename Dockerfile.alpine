@@ -1,0 +1,32 @@
+ARG BASE_IMAGE=alpine:3.21.2
+
+FROM $BASE_IMAGE
+
+RUN apk add --no-cache \
+  curl \
+  wget \
+  gcompat \
+  git \
+  glab \
+  idn2-utils \
+  jq \
+  openssh-client \
+  cosign
+
+# Install OpenTofu using the installer script in standalone mode
+# see https://opentofu.org/docs/intro/install/standalone
+# We may want to switch to installing manually from GitHub and verifying signature
+ARG OPENTOFU_VERSION
+RUN curl --proto '=https' --tlsv1.2 -fsSL https://get.opentofu.org/install-opentofu.sh -o install-opentofu.sh && \
+    chmod +x install-opentofu.sh && \
+    ./install-opentofu.sh --install-method standalone --opentofu-version "${OPENTOFU_VERSION}" && \
+    rm ./install-opentofu.sh && \
+    rm -rf /tmp/* && \
+    tofu --version
+
+WORKDIR /
+
+COPY --chmod=755 src/gitlab-tofu.sh /usr/bin/gitlab-tofu
+
+# Override ENTRYPOINT
+ENTRYPOINT []

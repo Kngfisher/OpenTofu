@@ -1,0 +1,48 @@
+{
+    "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+    "description": "Renovate configuration for OpenTofu versioning with CI/CD Components",
+    "packageRules": [
+        {
+            "matchDepNames": [
+                "opentofu/opentofu"
+            ],
+            "matchFileNames": [
+                ".gitlab-ci.yml",
+                ".gitlab-ci.yaml",
+                "templates/**/*.yml",
+                "templates/**/*.yaml"
+            ],
+            "allowedVersions": "<=1.9.0"
+        }
+    ],
+    "customManagers": [
+        {
+            "customType": "regex",
+            "fileMatch": [
+                "\\.gitlab-ci\\.ya?ml",
+                "templates/.*\\.ya?ml"
+            ],
+            "matchStrings": [
+                "opentofu_version:\\s*['\"]?(?<currentValue>[^'\"\n]+)['\"]?\n"
+            ],
+            "datasourceTemplate": "github-releases",
+            "depNameTemplate": "opentofu/opentofu",
+            "versioningTemplate": "semver",
+            "extractVersionTemplate": "^v(?<version>.*)$"
+        },
+        {
+            "customType": "regex",
+            "fileMatch": [
+                "\\.gitlab-ci\\.ya?ml",
+                "templates/.*\\.ya?ml"
+            ],
+            "matchStrings": [
+                "version:\\s*['\"]?(?<currentValue>[^'\"\n\\s]+)['\"]?\\s*# component version\n"
+            ],
+            "datasourceTemplate": "gitlab-releases",
+            "depNameTemplate": "components/opentofu",
+            "versioningTemplate": "semver",
+            "extractVersionTemplate": "^(?<version>.*)$"
+        }
+    ]
+}

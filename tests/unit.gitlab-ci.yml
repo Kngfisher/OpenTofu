@@ -1,0 +1,68 @@
+variables:
+  TEST_PROJECT_DIR: $CI_PROJECT_DIR/tests/iac
+
+.unit-test-base:
+  image: "$GITLAB_OPENTOFU_IMAGE_NAME"
+  before_script:
+    # Install dependencies
+    - |
+      if which apk >/dev/null; then
+        apk add bats parallel
+      elif which apt-get >/dev/null; then
+        apt-get update
+        apt-get install -y bats parallel
+      else
+        echo "Error: unable to install test dependencies, must either have apk or apt-get available."
+        exit 1
+      fi
+    - mkdir -p /tmp/bats-libs
+    - git clone --depth 1 --branch v0.3.0 https://github.com/bats-core/bats-support.git /tmp/bats-libs/bats-support
+    - git clone --depth 1 --branch v2.1.0 https://github.com/bats-core/bats-assert.git /tmp/bats-libs/bats-assert
+    - export BATS_LIBS=/tmp/bats-libs
+    # List versions
+    - bats --version
+    - jq --version
+    - gitlab-tofu version
+  artifacts:
+    when: always
+    paths:
+      - report.xml
+    reports:
+      junit: report.xml
+
+unit-test:gitlab-tofu:
+  extends:
+    - .unit-test-base
+    - .image-matrix:build
+  script:
+    - bats --jobs 8 --report-formatter junit --filter-tags '!source' tests/unit/gitlab-tofu.bats
+
+unit-test:gitlab-tofu:source:
+  extends:
+    - .unit-test-base
+  variables:
+    OPENTOFU_VERSION: $LATEST_OPENTOFU_VERSION
+  script:
+    - |
+      if which apk >/dev/null; then
+        if [ "$SHELL" = "ksh" ]; then
+          apk add loksh
+        else
+          apk add "$SHELL"
+        fi
+      elif which apt-get >/dev/null; then
+        apt-get update
+        apt-get install -y "$SHELL"
+      else
+        echo "Error: unable to install test dependencies, must either have apk or apt-get available."
+        exit 1
+      fi
+    - bats --jobs 8 --report-formatter junit --filter-tags 'source' tests/unit/gitlab-tofu.bats
+  parallel:
+    matrix:
+      - SHELL: "bash"
+        GITLAB_OPENTOFU_BASE_IMAGE_OS: ['alpine', 'debian']
+      - SHELL: "zsh"
+        GITLAB_OPENTOFU_BASE_IMAGE_OS: ['alpine', 'debian']
+      - SHELL: "ksh"
+        GITLAB_OPENTOFU_BASE_IMAGE_OS: ['alpine', 'debian']

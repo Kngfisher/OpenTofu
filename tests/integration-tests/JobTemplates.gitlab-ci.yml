@@ -1,0 +1,42 @@
+include:
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/job-templates@$CI_COMMIT_SHA
+    inputs:
+      image_registry_base: $GITLAB_OPENTOFU_IMAGE_BASE
+      version: $CI_COMMIT_SHA
+      opentofu_version: $OPENTOFU_VERSION
+      root_dir: $TEST_GITLAB_TOFU_ROOT_DIR
+      state_name: $TEST_GITLAB_TOFU_STATE_NAME
+
+stages: [validate, build, deploy, cleanup]
+
+# Required to run everything immediately, instead of manually.
+
+fmt:
+  extends: '.opentofu:fmt'
+  rules: [{when: always}]
+
+validate:
+  extends: '.opentofu:validate'
+  rules: [{when: always}]
+
+graph:
+  extends: '.opentofu:graph'
+  rules: [{when: always}]
+
+plan:
+  extends: '.opentofu:plan'
+  rules: [{when: always}]
+
+apply:
+  extends: '.opentofu:apply'
+  rules: [{when: always}]
+
+destroy:
+  extends: '.opentofu:destroy'
+  rules: [{when: always}]
+
+delete-state:
+  extends: '.opentofu:delete-state'
+  needs: [destroy]
+  rules: [{when: always}]
+

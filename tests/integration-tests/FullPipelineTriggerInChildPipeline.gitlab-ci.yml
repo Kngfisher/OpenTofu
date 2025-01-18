@@ -1,0 +1,18 @@
+include:
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/full-pipeline@$CI_COMMIT_SHA
+    inputs:
+      image_registry_base: $GITLAB_OPENTOFU_IMAGE_BASE
+      version: $CI_COMMIT_SHA
+      base_os: $GITLAB_OPENTOFU_BASE_IMAGE_OS
+      opentofu_version: $OPENTOFU_VERSION
+      root_dir: $TEST_GITLAB_TOFU_ROOT_DIR
+      state_name: $TEST_GITLAB_TOFU_STATE_NAME
+      # Required to run everything immediately, instead of manually.
+      fmt_rules: [{when: always}]
+      validate_rules: [{when: always}]
+      test_rules: [{when: always}]
+      plan_rules: [{when: always}]
+      apply_rules: [{when: always}]
+      destroy_rules: [{when: always}]
+      delete_state_rules: [{when: always}]
+      trigger_in_child_pipeline: true

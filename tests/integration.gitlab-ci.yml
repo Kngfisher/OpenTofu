@@ -1,0 +1,142 @@
+full-pipeline:
+  stage: test-integration
+  variables:
+    OPENTOFU_VERSION: $LATEST_OPENTOFU_VERSION
+    TEST_GITLAB_TOFU_STATE_NAME: ci-integration-$CI_JOB_NAME_SLUG-$CI_PIPELINE_IID-$CI_NODE_INDEX
+    TEST_GITLAB_TOFU_ROOT_DIR: tests/iac
+  trigger:
+    include: tests/integration-tests/$PIPELINE_NAME.gitlab-ci.yml
+    strategy: depend
+  parallel:
+    matrix:
+      - PIPELINE_NAME:
+          - Defaults
+          - FullPipelineTriggerInChildPipeline
+          - VarFile
+        GITLAB_OPENTOFU_BASE_IMAGE_OS:
+          - alpine
+          - debian
+
+validate-plan-apply:
+  stage: test-integration
+  variables:
+    OPENTOFU_VERSION: $LATEST_OPENTOFU_VERSION
+    TEST_GITLAB_TOFU_STATE_NAME: ci-integration-$CI_JOB_NAME_SLUG-$CI_PIPELINE_IID-$CI_NODE_INDEX
+    TEST_GITLAB_TOFU_ROOT_DIR: tests/iac
+  trigger:
+    include: tests/integration-tests/$PIPELINE_NAME.gitlab-ci.yml
+    strategy: depend
+  parallel:
+    matrix:
+      - PIPELINE_NAME:
+          - ValidatePlanApply
+          - ValidatePlanApplyTriggerInChildPipeline
+        GITLAB_OPENTOFU_BASE_IMAGE_OS:
+          - alpine
+          - debian
+
+validate-plan-destroy:
+  stage: test-integration
+  variables:
+    OPENTOFU_VERSION: $LATEST_OPENTOFU_VERSION
+    TEST_GITLAB_TOFU_STATE_NAME: ci-integration-$CI_JOB_NAME_SLUG-$CI_PIPELINE_IID-$CI_NODE_INDEX
+    TEST_GITLAB_TOFU_ROOT_DIR: tests/iac
+  trigger:
+    include: tests/integration-tests/$PIPELINE_NAME.gitlab-ci.yml
+    strategy: depend
+  parallel:
+    matrix:
+      - PIPELINE_NAME:
+          - ValidatePlanDestroy
+          - ValidatePlanDestroyTriggerInChildPipeline
+        GITLAB_OPENTOFU_BASE_IMAGE_OS:
+          - alpine
+          - debian
+
+job-templates:
+  stage: test-integration
+  variables:
+    OPENTOFU_VERSION: $LATEST_OPENTOFU_VERSION
+    TEST_GITLAB_TOFU_STATE_NAME: ci-integration-$CI_JOB_NAME_SLUG-$CI_PIPELINE_IID-$CI_NODE_INDEX
+    TEST_GITLAB_TOFU_ROOT_DIR: tests/iac
+  trigger:
+    include: tests/integration-tests/$PIPELINE_NAME.gitlab-ci.yml
+    strategy: depend
+  parallel:
+    matrix:
+      - PIPELINE_NAME:
+          - JobTemplates
+        GITLAB_OPENTOFU_BASE_IMAGE_OS:
+          - alpine
+          - debian
+
+test-job-template:
+  stage: test-integration
+  variables:
+    OPENTOFU_VERSION: $LATEST_OPENTOFU_VERSION
+    TEST_GITLAB_TOFU_STATE_NAME: ci-integration-$CI_JOB_NAME_SLUG-$CI_PIPELINE_IID-$CI_NODE_INDEX
+    TEST_GITLAB_TOFU_ROOT_DIR: tests/iac
+  trigger:
+    include: tests/integration-tests/$PIPELINE_NAME.gitlab-ci.yml
+    strategy: depend
+  parallel:
+    matrix:
+      - PIPELINE_NAME:
+          - TestJob
+        GITLAB_OPENTOFU_BASE_IMAGE_OS:
+          - alpine
+          - debian
+
+module-release-job-template:
+  stage: test-integration
+  variables:
+    OPENTOFU_VERSION: $LATEST_OPENTOFU_VERSION
+    TEST_GITLAB_TOFU_STATE_NAME: ci-integration-$CI_JOB_NAME_SLUG-$CI_PIPELINE_IID-$CI_NODE_INDEX
+    TEST_GITLAB_TOFU_ROOT_DIR: tests/iac
+  trigger:
+    include: tests/integration-tests/$PIPELINE_NAME.gitlab-ci.yml
+    strategy: depend
+  parallel:
+    matrix:
+      - PIPELINE_NAME:
+          - ModuleRelease
+        GITLAB_OPENTOFU_BASE_IMAGE_OS:
+          - alpine
+          - debian
+
+plan-job-template:
+  stage: test-integration
+  variables:
+    OPENTOFU_VERSION: $LATEST_OPENTOFU_VERSION
+    TEST_GITLAB_TOFU_STATE_NAME: ci-integration-$CI_JOB_NAME_SLUG-$CI_PIPELINE_IID-$CI_NODE_INDEX
+    TEST_GITLAB_TOFU_ROOT_DIR: tests/iac
+  trigger:
+    include: tests/integration-tests/$PIPELINE_NAME.gitlab-ci.yml
+    strategy: depend
+  rules:
+    - if: '$CI_SERVER_FQDN == "gitlab.com"'
+  parallel:
+    matrix:
+      - PIPELINE_NAME:
+          - WarningOnNonEmptyPlan
+        GITLAB_OPENTOFU_BASE_IMAGE_OS:
+          - alpine
+          - debian
+
+apply-job-template:
+  stage: test-integration
+  variables:
+    OPENTOFU_VERSION: $LATEST_OPENTOFU_VERSION
+    TEST_GITLAB_TOFU_STATE_NAME: ci-integration-$CI_JOB_NAME_SLUG-$CI_PIPELINE_IID-$CI_NODE_INDEX
+    TEST_GITLAB_TOFU_ROOT_DIR: tests/iac
+  trigger:
+    include: tests/integration-tests/$PIPELINE_NAME.gitlab-ci.yml
+    strategy: depend
+  parallel:
+    matrix:
+      - PIPELINE_NAME:
+          - AutoEncryption
+          - AutoEncryptionMigrate
+        GITLAB_OPENTOFU_BASE_IMAGE_OS:
+          - alpine
+          - debian

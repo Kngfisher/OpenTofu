@@ -1,0 +1,22 @@
+include:
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/validate-plan-apply@$CI_COMMIT_SHA
+    inputs:
+      image_registry_base: $GITLAB_OPENTOFU_IMAGE_BASE
+      version: $CI_COMMIT_SHA
+      base_os: $GITLAB_OPENTOFU_BASE_IMAGE_OS
+      opentofu_version: $OPENTOFU_VERSION
+      root_dir: $TEST_GITLAB_TOFU_ROOT_DIR
+      state_name: $TEST_GITLAB_TOFU_STATE_NAME
+      fmt_rules: [{when: on_success}]
+      validate_rules: [{when: on_success}]
+      plan_rules: [{when: on_success}]
+      apply_rules: [{when: on_success}]
+
+  # For CI Terraform state cleanup
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/delete-state@$CI_COMMIT_SHA
+    inputs:
+      stage: cleanup
+      state_name: $TEST_GITLAB_TOFU_STATE_NAME
+      rules: [{when: always}]
+
+stages: [validate, build, deploy, cleanup]

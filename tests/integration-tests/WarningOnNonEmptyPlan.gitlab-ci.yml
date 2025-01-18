@@ -1,0 +1,37 @@
+include:
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/plan@$CI_COMMIT_SHA
+    inputs:
+      image_registry_base: $GITLAB_OPENTOFU_IMAGE_BASE
+      version: $CI_COMMIT_SHA
+      base_os: $GITLAB_OPENTOFU_BASE_IMAGE_OS
+      opentofu_version: $OPENTOFU_VERSION
+      root_dir: $TEST_GITLAB_TOFU_ROOT_DIR
+      state_name: $TEST_GITLAB_TOFU_STATE_NAME
+      warning_on_non_empty_plan: true
+
+  # For CI Terraform state cleanup
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/delete-state@$CI_COMMIT_SHA
+    inputs:
+      state_name: $TEST_GITLAB_TOFU_STATE_NAME
+      rules: [{when: always}]
+
+stages: [build, cleanup, verify]
+
+verify:plan-job:has-warning-state:
+  stage: verify
+  needs: ['plan']
+  rules: [{when: always}]
+  image: alpine:latest
+  before_script:
+    - apk add --update curl jq
+  script:
+    - |
+      backend_address="${GITLAB_TOFU_STATE_ADDRESS:-${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${backend_state_name}}"
+      endpoint="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/pipelines/${CI_PIPELINE_ID}/jobs"
+      is_warning_job=$(curl --silent "$endpoint" | jq -r '.[] | select(.name == "plan") | [.status == "failed", .allow_failure == true] | all')
+      if [ "$is_warning_job" != 'true' ]; then
+        echo 'Error: the plan job was not in warning state.'
+        exit 1
+      else
+        echo 'Success: the plan job was in warning state.'
+      fi

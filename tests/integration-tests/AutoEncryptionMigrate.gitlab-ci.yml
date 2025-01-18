@@ -1,0 +1,49 @@
+include:
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/apply@$CI_COMMIT_SHA
+    inputs:
+      image_registry_base: $GITLAB_OPENTOFU_IMAGE_BASE
+      version: $CI_COMMIT_SHA
+      base_os: $GITLAB_OPENTOFU_BASE_IMAGE_OS
+      opentofu_version: $OPENTOFU_VERSION
+      as: 'apply:unencrypted'
+      stage: unencrypted
+      root_dir: $TEST_GITLAB_TOFU_ROOT_DIR
+      state_name: $TEST_GITLAB_TOFU_STATE_NAME
+      no_plan: true
+
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/apply@$CI_COMMIT_SHA
+    inputs:
+      image_registry_base: $GITLAB_OPENTOFU_IMAGE_BASE
+      version: $CI_COMMIT_SHA
+      base_os: $GITLAB_OPENTOFU_BASE_IMAGE_OS
+      opentofu_version: $OPENTOFU_VERSION
+      as: 'apply:migrate'
+      stage: migrate
+      root_dir: $TEST_GITLAB_TOFU_ROOT_DIR
+      state_name: $TEST_GITLAB_TOFU_STATE_NAME
+      no_plan: true
+      auto_encryption: true
+      auto_encryption_passphrase: '947F23E4-B9FC-4E76-B7B4-1D35ECBE9B09'
+      auto_encryption_enable_migration_from_unencrypted: true
+
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/apply@$CI_COMMIT_SHA
+    inputs:
+      image_registry_base: $GITLAB_OPENTOFU_IMAGE_BASE
+      version: $CI_COMMIT_SHA
+      base_os: $GITLAB_OPENTOFU_BASE_IMAGE_OS
+      opentofu_version: $OPENTOFU_VERSION
+      as: 'apply:encrypted'
+      stage: encrypted
+      root_dir: $TEST_GITLAB_TOFU_ROOT_DIR
+      state_name: $TEST_GITLAB_TOFU_STATE_NAME
+      no_plan: true
+      auto_encryption: true
+      auto_encryption_passphrase: '947F23E4-B9FC-4E76-B7B4-1D35ECBE9B09'
+
+  # For CI Terraform state cleanup
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/delete-state@$CI_COMMIT_SHA
+    inputs:
+      state_name: $TEST_GITLAB_TOFU_STATE_NAME
+      rules: [{when: always}]
+
+stages: [unencrypted, migrate, encrypted, cleanup]

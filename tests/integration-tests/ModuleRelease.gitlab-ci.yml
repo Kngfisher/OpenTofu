@@ -1,0 +1,41 @@
+variables:
+  MODULE_SYSTEM: local
+  MODULE_VERSION: 0.0.0-$CI_COMMIT_SHA-$CI_PIPELINE_ID
+
+include:
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/module-release@$CI_COMMIT_SHA
+    inputs:
+      root_dir: $TEST_GITLAB_TOFU_ROOT_DIR/modules/random-pet
+      module_system: $MODULE_SYSTEM
+      module_version: $MODULE_VERSION
+
+stages: [release, destroy]
+
+# Required to run everything immediately, instead of manually.
+
+module-release:
+  rules: [{when: always}]
+
+delete-module:
+  stage: destroy
+  image: curlimages/curl:latest
+  needs: [module-release]
+  rules: [{when: always}]
+  script:
+    - >-
+      PACKAGE_ID=$(
+      curl
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}"
+      --fail-with-body
+      "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages?package_type=terraform_module&package_version=${MODULE_VERSION}"
+      | sed -E 's/\[\{"id":"?([^,"]*)"?.*/\1/'
+      )
+    - echo deleting package $PACKAGE_ID
+    - >-
+      curl
+      --request DELETE
+      --header "JOB-TOKEN: ${CI_JOB_TOKEN}"
+      --fail-with-body
+      "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/${PACKAGE_ID}"
+
+
