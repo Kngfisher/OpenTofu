@@ -1,0 +1,69 @@
+Release $CI_COMMIT_TAG of components repository $CI_PROJECT_PATH.
+
+## Changelog
+
+$CHANGELOG
+
+See the [CHANGELOG.md](CHANGELOG.md) file for the entire history.
+
+## Usage
+
+You can use the OpenTofu CI/CD component from the CI/CD catalog using:
+
+```yaml
+include:
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/full-pipeline@$CI_COMMIT_TAG
+    inputs:
+      # The version must currently be specified explicitly as an input,
+      # to find the correctly associated images. # This can be removed
+      # once https://gitlab.com/gitlab-org/gitlab/-/issues/438275 is solved.
+      version: $CI_COMMIT_TAG # component version
+      opentofu_version: $LATEST_OPENTOFU_VERSION
+
+stages: [validate, test, build, deploy, cleanup]
+```
+
+See the [README.md](README.md) for more usage examples.
+
+## Available OpenTofu versions
+
+This release is available with the following OpenTofu versions:
+
+$AVAILABLE_OPENTOFU_VERSIONS
+
+## Available GitLab OpenTofu images
+
+This release deployed the following `gitlab-opentofu` images:
+
+$AVAILABLE_IMAGES
+
+The images are available for the following platforms:
+
+- `linux/amd64`
+- `linux/arm64`
+
+And with the follow base OS images:
+
+- `alpine`, use `base_os: alpine` input to use it (default).
+- `debian`, use `base_os: debian` input to use it.
+
+The images have been signed with `cosign` and can be verified with the following command:
+
+```shell
+cosign verify \
+  "$CI_REGISTRY_IMAGE/gitlab-opentofu:$CI_COMMIT_TAG-alpine" \
+  --certificate-identity "$CI_PROJECT_URL//.gitlab-ci.yml@refs/tags/$CI_COMMIT_TAG" \
+  --certificate-oidc-issuer "https://gitlab.com"
+```
+
+The `image_digest` input can be used to strictly pull by the image digest.
+The `image_digest` input value needs to have the format of `@<type>:<hash>`
+where `<type>:<hash>` is the `digest` value from the images list above.
+
+> **Note:**
+>
+> When using the component with the inputs `version` and `opentofu_version`,<br>
+> then the image tag is constructed with the following pattern:<br>
+> `<version>-opentofu<opentofu_version>`
+>
+> Read more about versioning and releases [here](README.md#releases-versioning).
