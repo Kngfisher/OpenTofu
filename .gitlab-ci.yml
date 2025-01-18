@@ -1,0 +1,391 @@
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_REF_PROTECTED == "true"
+
+include:
+  - local: opentofu_versions.yaml
+  - local: tests/unit.gitlab-ci.yml
+    rules:
+      - if: $SKIP_TESTS == "true"
+        when: never
+      - changes:
+          - src/gitlab-tofu.sh
+          - opentofu_versions.yaml
+          - Dockerfile.*
+          - .dockerignore
+          - .gitlab-ci.yml
+          - tests/unit.gitlab-ci.yml
+          - tests/unit/*
+      - if: $CI_COMMIT_TAG
+  - local: tests/integration.gitlab-ci.yml
+    rules:
+      - if: $SKIP_TESTS == "true"
+        when: never
+      - changes:
+          - src/gitlab-tofu.sh
+          - opentofu_versions.yaml
+          - Dockerfile.*
+          - .dockerignore
+          - .gitlab-ci.yml
+          - templates/*.yml
+          - tests/integration.gitlab-ci.yml
+          - tests/integration-tests/*.yml
+          - tests/iac/**.tf
+      - if: $CI_COMMIT_TAG
+  # FIXME: we cannot make this work for all use cases because of the following:
+  # - cannot pass parallel.matrix to the component, thus we need to extend it
+  # - that leads to a problem that when this component is ruled out, the extended job fails,
+  #   because it doesn't have a script or trigger.
+  #   Additionally, when this project is mirrored into another instance the component reference fails.
+  #   This may be solved with https://gitlab.com/gitlab-org/gitlab/-/issues/434260#note_1776822074
+
+  # - component: $CI_SERVER_FQDN/components/container-scanning/container-scanning@3.0
+  #   inputs:
+  #     stage: quality
+  #     cs_image: $GITLAB_OPENTOFU_IMAGE_NAME
+  #     git_strategy: fetch
+
+stages:
+  - build
+  - test
+  - test-integration
+  - quality
+  - deploy
+  - sign
+  - verify
+  - release
+  - cleanup
+
+.image-matrix:build:
+  parallel:
+    matrix:
+      - OPENTOFU_VERSION: !reference [.data, supported_versions]
+        GITLAB_OPENTOFU_BASE_IMAGE_OS:
+          - 'alpine'
+          - 'debian'
+
+.image-matrix:deploy:
+  parallel:
+    # OPENTOFU_VERSION: opentofu version to release in the job (from gitlab-opentofu-image:build)
+    # RELEASE_VERSION:  Tag base for the release image
+    # RELEASE_OPENTOFU_VERSION:  opentofu version to contained in the release tag
+    matrix:
+      - # :{commit-tag}-opentofu{opentofu-version}
+        OPENTOFU_VERSION: !reference [.data, supported_versions]
+        RELEASE_VERSION: $CI_COMMIT_TAG
+        RELEASE_OPENTOFU_VERSION: $OPENTOFU_VERSION
+        RELEASE_BASE_IMAGE_OS: ['alpine', 'debian']
+      - # :latest-opentofu{opentofu-version}
+        OPENTOFU_VERSION: !reference [.data, supported_versions]
+        RELEASE_VERSION: latest
+        RELEASE_OPENTOFU_VERSION: $OPENTOFU_VERSION
+        RELEASE_BASE_IMAGE_OS: ['alpine', 'debian']
+      - # :{commit-tag|latest}{-opentofulatest|}
+        OPENTOFU_VERSION: $LATEST_OPENTOFU_VERSION
+        RELEASE_VERSION: ["${CI_COMMIT_TAG}", latest]
+        RELEASE_OPENTOFU_VERSION: ["", latest]
+        RELEASE_BASE_IMAGE_OS: ['alpine', 'debian']
+
+.image-matrix:deploy:release-name-script: &image-matrix-deploy-release-name-script
+  # OCI image tags are not compatible with semver, specifically the build metadata part
+  # indicated with a `+` sign, see https://github.com/distribution/distribution/issues/1201
+  # We use a dash `-` here, instead of the `+`.
+  # This may be problematic, because it indicates a semver prerelease.
+  - export RELEASE_IMAGE_NAME="$CI_REGISTRY_IMAGE/gitlab-opentofu"
+  - export RELEASE_IMAGE_TAG="${RELEASE_VERSION}${RELEASE_OPENTOFU_VERSION:+-opentofu$RELEASE_OPENTOFU_VERSION}${RELEASE_BASE_IMAGE_OS:+-$RELEASE_BASE_IMAGE_OS}"
+  - export RELEASE_IMAGE="${RELEASE_IMAGE_NAME}:${RELEASE_IMAGE_TAG}"
+
+variables:
+  # OpenTofu variables
+  LATEST_OPENTOFU_VERSION: !reference [.data, latest_version]
+
+  # OpenTofu image build variables:
+  PLATFORMS: linux/amd64,linux/arm64
+  GITLAB_OPENTOFU_IMAGE_BASE: "$CI_REGISTRY_IMAGE/internal"
+  GITLAB_OPENTOFU_IMAGE_NAME: "$GITLAB_OPENTOFU_IMAGE_BASE/gitlab-opentofu:$CI_COMMIT_SHA-opentofu$OPENTOFU_VERSION-$GITLAB_OPENTOFU_BASE_IMAGE_OS"
+
+check-semantic-version:
+  stage: .pre
+  rules:
+    - if: $CI_COMMIT_TAG
+  image: alpine:3.21.2
+  before_script:
+    - apk add perl
+  script:
+    - echo -n "$CI_COMMIT_TAG" | ./.gitlab/scripts/check-semantic-version.sh
+
+.gitlab-opentofu-image:build:base:rules: &gitlab-opentofu-image-build-base-rules
+  - if: $CI_COMMIT_TAG
+  - changes:
+      - Dockerfile.*
+      - .dockerignore
+      - opentofu_versions.yaml
+      - .gitlab-ci.yml
+      - src/**/*
+      - templates/**/*
+      - tests/**/*
+
+.gitlab-opentofu-image:build:base:
+  extends: '.image-matrix:build'
+  stage: build
+  image: quay.io/containers/buildah:v1.38.0
+  before_script:
+    # Supporting GitLab dependency proxies:
+    # see https://docs.gitlab.com/ee/user/packages/dependency_proxy/
+    - |
+      if [ -n "$CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX" ]; then
+        echo "Detected GitLab Dependency Proxy at '$CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX', configuring it for buildah ..."
+        cat > /etc/containers/registries.conf.d/dependency-proxy.conf <<EOF
+        [[registry]]
+        location = "docker.io"
+        [[registry.mirror]]
+        location = "${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}"
+      EOF
+
+        buildah login -u "$CI_DEPENDENCY_PROXY_USER" -p "$CI_DEPENDENCY_PROXY_PASSWORD" "$CI_DEPENDENCY_PROXY_SERVER"
+      fi
+    - buildah login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - echo "Building $GITLAB_OPENTOFU_IMAGE_NAME"
+    - buildah build
+      --layers
+      --cache-from $CI_REGISTRY_IMAGE/cache
+      --cache-to $CI_REGISTRY_IMAGE/cache
+      --platform "$PLATFORMS"
+      --build-arg OPENTOFU_VERSION=$OPENTOFU_VERSION
+      --file Dockerfile.$GITLAB_OPENTOFU_BASE_IMAGE_OS
+      --jobs 2
+      --manifest "$GITLAB_OPENTOFU_IMAGE_NAME"
+      .
+    - buildah manifest push --all "$GITLAB_OPENTOFU_IMAGE_NAME"
+
+gitlab-opentofu-image:build:
+  extends: '.gitlab-opentofu-image:build:base'
+  rules:
+    - if: $OPENTOFU_COMPONENT_IMAGE_BUILD_RUNNER_TAG
+      when: never
+    - *gitlab-opentofu-image-build-base-rules
+
+gitlab-opentofu-image:build:custom-runner:
+  extends: '.gitlab-opentofu-image:build:base'
+  tags:
+    - $OPENTOFU_COMPONENT_IMAGE_BUILD_RUNNER_TAG
+  rules:
+    - if: '$OPENTOFU_COMPONENT_IMAGE_BUILD_RUNNER_TAG == null || $OPENTOFU_COMPONENT_IMAGE_BUILD_RUNNER_TAG == ""'
+      when: never
+    - *gitlab-opentofu-image-build-base-rules
+
+check-versions:
+  stage: test
+  needs: []
+  image: alpine:3.21.2
+  before_script:
+    - apk add coreutils yq patch git
+  script:
+    - ./.gitlab/scripts/update-opentofu-versions.sh
+    - git diff --exit-code
+
+check-readme:
+  stage: test
+  needs: []
+  image: alpine:3.21.2
+  before_script:
+    - apk add coreutils yq make git
+  script:
+    - make docs
+    - git diff --exit-code
+  rules:
+    - if: $CI_COMMIT_TAG
+    - changes:
+        - Makefile
+        - opentofu_versions.yaml
+        - .gitlab-ci.yml
+        - README.md
+        - .gitlab/README.md.template
+        - templates/**/*
+
+shellcheck:
+  stage: test
+  needs: []
+  image: koalaman/shellcheck-alpine:v0.10.0
+  script:
+    - shellcheck ./src/gitlab-tofu.sh
+    - shellcheck ./.gitlab/scripts/*.sh
+  rules:
+    - changes:
+        - .gitlab-ci.yml
+        - src/gitlab-tofu.sh
+        - .gitlab/scripts/*.sh
+    - if: $CI_COMMIT_TAG
+
+# FIXME: see component include why we have to disable this.
+# container_scanning:
+#   extends: .opentofu-versions
+#   rules:
+#     - changes:
+#         - src/gitlab-tofu.sh
+#         - Dockerfile
+#         - .gitlab-ci.yml
+#     - if: $CI_COMMIT_TAG
+#     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+.gitlab-opentofu-image:deploy:base:
+  extends: '.image-matrix:deploy'
+  stage: deploy
+  image:
+    name: alpine/crane:0.20.2
+    entrypoint: [""]
+  variables:
+    GITLAB_OPENTOFU_BASE_IMAGE_OS: $RELEASE_BASE_IMAGE_OS
+  before_script:
+    - *image-matrix-deploy-release-name-script
+    - crane auth login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - 'echo "base image OS: $GITLAB_OPENTOFU_BASE_IMAGE_OS"'
+    - echo "Deploying $GITLAB_OPENTOFU_IMAGE_NAME as $RELEASE_IMAGE"
+
+gitlab-opentofu-image:deploy:
+  extends: ['.gitlab-opentofu-image:deploy:base']
+  script:
+    - crane copy "$GITLAB_OPENTOFU_IMAGE_NAME" "$RELEASE_IMAGE"
+  rules:
+    - if: $CI_COMMIT_TAG
+
+gitlab-opentofu-image:deploy:dry-run:
+  extends: ['.gitlab-opentofu-image:deploy:base']
+  needs:
+    - job: 'gitlab-opentofu-image:build'
+      optional: true
+    - job: 'gitlab-opentofu-image:build:custom-runner'
+      optional: true
+  script:
+    - echo "dry run"
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - changes:
+        - Dockerfile.*
+        - .dockerignore
+        - opentofu_versions.yaml
+        - .gitlab-ci.yml
+        - src/**/*
+
+gitlab-opentofu-image:sign:
+  extends: '.image-matrix:deploy'
+  stage: sign
+  image:
+    name: alpine/crane:0.20.2
+    entrypoint: [""]
+  variables:
+    COSIGN_YES: "true"  # Used by Cosign to skip confirmation prompts for non-destructive operations
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  before_script:
+    - *image-matrix-deploy-release-name-script
+    - apk add --update cosign
+    - cosign login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    # OpenContainers Annotations from: https://github.com/opencontainers/image-spec/blob/main/annotations.md
+    - cosign sign "$(crane digest --full-ref "$RELEASE_IMAGE")"
+        --annotations "org.opencontainers.image.created=$CI_PIPELINE_CREATED_AT"
+        --annotations "org.opencontainers.image.authors=$CI_PROJECT_URL"
+        --annotations "org.opencontainers.image.url=$CI_PROJECT_URL"
+        --annotations "org.opencontainers.image.documentation=$CI_PROJECT_URL"
+        --annotations "org.opencontainers.image.source=$CI_PROJECT_URL"
+        --annotations "org.opencontainers.image.version=$CI_COMMIT_TAG"
+        --annotations "org.opencontainers.image.revision=$CI_COMMIT_SHA"
+        --annotations "org.opencontainers.image.vendor=GitLab"
+        --annotations "org.opencontainers.image.licenses=MIT"
+        --annotations "org.opencontainers.image.ref.name=$RELEASE_IMAGE"
+        --annotations "org.opencontainers.image.title='GitLab OpenTofu CI/CD Component'"
+        --annotations "org.opencontainers.image.description='GitLab OpenTofu CI/CD Component including OpenTofu and a wrapper to integrate with GitLab.'"
+        --annotations "com.gitlab.ci.user.name=$GITLAB_USER_NAME"
+        --annotations "com.gitlab.ci.user.id=$GITLAB_USER_ID"
+        --annotations "com.gitlab.ci.pipeline.id=$CI_PIPELINE_ID"
+        --annotations "com.gitlab.ci.pipeline.url=$CI_PIPELINE_URL"
+        --annotations "com.gitlab.ci.job.id=$CI_JOB_ID"
+        --annotations "com.gitlab.ci.job.url=$CI_JOB_URL"
+        --annotations "com.gitlab.ci.commit.sha=$CI_COMMIT_SHA"
+        --annotations "com.gitlab.ci.commit.ref.name=$CI_COMMIT_REF_NAME"
+        --annotations "com.gitlab.ci.project.path=$CI_PROJECT_PATH"
+        --annotations "tag=$RELEASE_IMAGE_TAG"
+    - export image_digest="$(crane digest $RELEASE_IMAGE)"
+    - 'echo "- \`$RELEASE_IMAGE\` (digest: \`$image_digest\`)" > image$CI_JOB_ID.md'
+  artifacts:
+    paths:
+      - 'image*.md'
+  rules:
+    - if: '$CI_SERVER_FQDN == "gitlab.com" && $CI_COMMIT_TAG'
+
+gitlab-opentofu-image:verify-signature:
+  extends: '.image-matrix:deploy'
+  stage: verify
+  image:
+    name: alpine/crane:0.20.2
+    entrypoint: [""]
+  before_script:
+    - *image-matrix-deploy-release-name-script
+    - apk add --update cosign
+  script:
+    - cosign verify
+      --certificate-identity "$CI_PROJECT_URL//.gitlab-ci.yml@refs/tags/$CI_COMMIT_TAG"
+      --certificate-oidc-issuer "https://gitlab.com"
+      "$RELEASE_IMAGE"
+      "$(crane digest --full-ref "$RELEASE_IMAGE")"
+  rules:
+    - if: '$CI_SERVER_FQDN == "gitlab.com" && $CI_COMMIT_TAG'
+
+.release:base:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:v0.20.0
+  before_script:
+    - apk add --update yq envsubst
+  script:
+    - echo "Creating release $RELEASE_TAG_NAME"
+    - ./.gitlab/scripts/generate-release-notes.sh > release-notes.md
+  artifacts:
+    paths:
+      - images.md
+      - release-notes.md
+
+release:
+  extends: ['.release:base']
+  rules:
+    - if: $CI_COMMIT_TAG
+  variables:
+    RELEASE_TAG_NAME: $CI_COMMIT_TAG
+  release:
+    tag_name: $CI_COMMIT_TAG
+    description: './release-notes.md'
+
+release:dry-run:
+  extends: ['.release:base']
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - changes:
+        - .gitlab-ci.yml
+        - ./.gitlab/scripts/generate-release-notes.sh
+        - ./.gitlab/release-notes.md.template
+  after_script:
+    - cat release-notes.md
+  variables:
+    RELEASE_TAG_NAME: '<dry-run>'
+
+old-states:
+  image: alpine:3.21.2
+  stage: cleanup
+  variables:
+    REMOVE_STATES_UNTIL: 1 week ago
+    GITLAB_TOKEN: $GITLAB_STATE_CLEANER_TOKEN
+  before_script:
+    - apk add --update coreutils curl jq
+    - export FETCH_OLDER_THAN=$(date '+%Y-%m-%dT%H:%M:%SZ' -d "${REMOVE_STATES_UNTIL}")
+  script:
+    - echo "Going to remove Terraform States older than '$FETCH_OLDER_THAN'"
+    - ./.gitlab/scripts/fetch-states.sh | sed -n '1d;p' | ./.gitlab/scripts/remove-states.sh
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "schedule" && $STATE_CLEANER == "true"'
